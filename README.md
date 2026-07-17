@@ -10,10 +10,41 @@ for images.
 
 - [x] **Step 1** — Scaffold, env template, Supabase + R2 clients
 - [x] **Step 2** — Presigned R2 upload API and client upload utility
-- [x] **Step 3** — 20/80 UI shell (currently on mock data)
-- [ ] **Step 4** — Real Supabase data + optimistic drag-and-drop
-- [ ] **Step 5** — Canvas/MSE burst selection
-- [ ] **Step 6** — Bucket management
+- [x] **Step 3** — 20/80 UI shell
+- [x] **Step 4** — Real Supabase data + optimistic drag-and-drop
+- [x] **Step 5** — Canvas/MSE burst selection
+- [x] **Step 6** — Bucket management (inline create, archive/unarchive)
+
+## Required: R2 bucket CORS
+
+The browser talks to R2 directly — presigned PUT uploads and canvas pixel
+reads for burst detection are both cross-origin requests, and **both fail
+without a CORS policy on the bucket**. This cannot be set via an
+object-scoped API token; do it once in the dashboard:
+
+Cloudflare → R2 → *your bucket* → Settings → CORS policy:
+
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:3000", "https://your-app.vercel.app"],
+    "AllowedMethods": ["GET", "PUT"],
+    "AllowedHeaders": ["content-type"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+Replace the second origin with your real deployment URL(s).
+
+## Burst selection
+
+Shift+click (or long-press) a photo to select its whole burst. Every photo
+captured within 60 seconds of the anchor is downsampled to 64×64 grayscale on
+a hidden canvas and compared to the anchor by mean squared error; frames
+under the threshold join the selection, and the stack drags as one. Photos
+that fail to load (usually missing CORS) are skipped and reported, never
+fatal.
 
 ## Setup
 

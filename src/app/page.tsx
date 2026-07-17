@@ -6,10 +6,12 @@ import { Loader2, Upload } from "lucide-react";
 
 import PhotoGrid from "@/components/PhotoGrid";
 import Sidebar from "@/components/Sidebar";
+import { findBurst } from "@/lib/burst";
 import {
   assignPhotosToDog,
   createDog,
   fetchDogs,
+  setDogStatus,
   fetchPhotoCounts,
   fetchUnsortedPhotos,
   setPhotoUsed,
@@ -105,9 +107,31 @@ export default function TriagePage() {
     });
   };
 
-  // Placeholder until step 5 replaces it with canvas-based MSE matching.
+  const burstBusy = useRef(false);
   const burstSelect = (photo: Photo) => {
+    // Select the anchor immediately so the gesture feels instant, then grow
+    // the selection as comparisons resolve.
     setSelectedIds((previous) => new Set(previous).add(photo.id));
+    if (burstBusy.current) return;
+    burstBusy.current = true;
+
+    findBurst(unsorted, photo)
+      .then(({ ids, failures }) => {
+        setSelectedIds((previous) => new Set([...previous, ...ids]));
+        if (failures > 0) {
+          reportActionError(
+            `${failures} nearby photo(s) could not be compared (image load failed — check bucket CORS).`,
+          );
+        }
+      })
+      .catch((error) =>
+        reportActionError(
+          error instanceof Error ? error.message : "Burst detection failed.",
+        ),
+      )
+      .finally(() => {
+        burstBusy.current = false;
+      });
   };
 
   const handleDragStart = (photo: Photo) => {
@@ -146,15 +170,29 @@ export default function TriagePage() {
     });
   };
 
-  const handleCreateDog = () => {
-    const name = window.prompt("Name of the new dog?")?.trim();
-    if (!name) return;
-
+  const handleCreateDog = (name: string) => {
     createDog(name)
       .then((dog) => setDogs((previous) => [...previous, dog]))
       .catch((error) =>
         reportActionError(error instanceof Error ? error.message : "Create failed."),
       );
+  };
+
+  const handleSetDogStatus = (dog: Dog, status: Dog["status"]) => {
+    // Optimistic flip with rollback to the dog's previous status.
+    setDogs((previous) =>
+      previous.map((candidate) =>
+        candidate.id === dog.id ? { ...candidate, status } : candidate,
+      ),
+    );
+    setDogStatus(dog.id, status).catch((error) => {
+      setDogs((previous) =>
+        previous.map((candidate) =>
+          candidate.id === dog.id ? { ...candidate, status: dog.status } : candidate,
+        ),
+      );
+      reportActionError(error instanceof Error ? error.message : "Update failed.");
+    });
   };
 
   const handleFilesChosen = async (fileList: FileList | null) => {
@@ -223,6 +261,7 @@ export default function TriagePage() {
         photoCounts={filedCounts}
         dropTargetId={dropTargetId}
         onCreateDog={handleCreateDog}
+        onSetDogStatus={handleSetDogStatus}
         onDropOnDog={handleDropOnDog}
         onDragOverDog={setDropTargetId}
       />

@@ -61,6 +61,17 @@ export async function setPhotoUsed(
   if (error) throw new Error(`Updating photo failed: ${error.message}`);
 }
 
+export async function setDogStatus(
+  dogId: string,
+  status: Dog["status"],
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from("dogs")
+    .update({ status })
+    .eq("id", dogId);
+  if (error) throw new Error(`Updating dog failed: ${error.message}`);
+}
+
 export async function createDog(name: string): Promise<Dog> {
   const { data, error } = await getSupabase()
     .from("dogs")
