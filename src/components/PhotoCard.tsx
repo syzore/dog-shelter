@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { Check, Sparkles } from "lucide-react";
+import { Check, Download, Loader2, Maximize2, Sparkles } from "lucide-react";
 
 import type { Photo } from "@/lib/types";
 
@@ -12,6 +12,8 @@ type PhotoCardProps = {
   onToggleSelect: (photo: Photo, additive: boolean) => void;
   onToggleUsed: (photo: Photo) => void;
   onBurstSelect: (photo: Photo) => void;
+  onOpenFullscreen: (photo: Photo) => void;
+  onDownload: (photo: Photo) => void | Promise<void>;
   onDragStart: (photo: Photo, event: React.DragEvent) => void;
   onDragEnd: () => void;
 };
@@ -24,6 +26,8 @@ export default function PhotoCard({
   onToggleSelect,
   onToggleUsed,
   onBurstSelect,
+  onOpenFullscreen,
+  onDownload,
   onDragStart,
   onDragEnd,
 }: PhotoCardProps) {
@@ -31,6 +35,7 @@ export default function PhotoCard({
   // without causing one.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -138,6 +143,43 @@ export default function PhotoCard({
       >
         <Sparkles className="size-3" aria-hidden />
       </button>
+
+      <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <button
+          type="button"
+          aria-label="Open full screen"
+          title="Open full screen"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenFullscreen(photo);
+          }}
+          className="grid size-5 place-items-center rounded border border-white/25 bg-black/55 text-white/85 transition-colors hover:bg-black/75"
+        >
+          <Maximize2 className="size-3" aria-hidden />
+        </button>
+        <button
+          type="button"
+          aria-label="Download photo"
+          title="Download photo"
+          disabled={downloading}
+          onClick={async (event) => {
+            event.stopPropagation();
+            setDownloading(true);
+            try {
+              await onDownload(photo);
+            } finally {
+              setDownloading(false);
+            }
+          }}
+          className="grid size-5 place-items-center rounded border border-white/25 bg-black/55 text-white/85 transition-colors hover:bg-black/75"
+        >
+          {downloading ? (
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+          ) : (
+            <Download className="size-3" aria-hidden />
+          )}
+        </button>
+      </div>
     </figure>
   );
 }

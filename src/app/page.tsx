@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Loader2, Upload } from "lucide-react";
 
+import Lightbox from "@/components/Lightbox";
 import PhotoGrid from "@/components/PhotoGrid";
 import Sidebar from "@/components/Sidebar";
 import { findBurst } from "@/lib/burst";
@@ -11,11 +12,15 @@ import {
   assignPhotosToDog,
   createDog,
   fetchDogs,
-  setDogStatus,
   fetchPhotoCounts,
+  fetchPhotosForDog,
+  fetchUnsortedCount,
   fetchUnsortedPhotos,
+  renameDog,
+  setDogStatus,
   setPhotoUsed,
 } from "@/lib/data";
+import { downloadPhoto } from "@/lib/download";
 import type { Dog, Photo } from "@/lib/types";
 import { uploadPhotos } from "@/lib/upload";
 
@@ -27,8 +32,14 @@ export default function TriagePage() {
   const [dogs, setDogs] = useState<Dog[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [filedCounts, setFiledCounts] = useState<Record<string, number>>({});
+  const [unsortedCount, setUnsortedCount] = useState(0);
+  // null = the unsorted pile; otherwise the dog whose photos are shown.
+  const [activeDogId, setActiveDogId] = useState<string | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [unsortedIsDropTarget, setUnsortedIsDropTarget] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string>("");
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -44,6 +55,8 @@ export default function TriagePage() {
       setDogs(dogRows);
       setPhotos(photoRows);
       setFiledCounts(counts);
+      setUnsortedCount(photoRows.length);
+      setActiveDogId(null);
       setLoadState("ready");
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Load failed.");
@@ -65,11 +78,41 @@ export default function TriagePage() {
     window.setTimeout(() => setActionError(""), 6000);
   };
 
-  const unsorted = useMemo(
+  const displayedPhotos = useMemo(
     () =>
       [...photos].sort((a, b) => a.captured_at.localeCompare(b.captured_at)),
     [photos],
   );
+
+  const activeDog = activeDogId
+    ? dogs.find((dog) => dog.id === activeDogId) ?? null
+    : null;
+
+  const selectView = async (dogId: string | null) => {
+    if (dogId === activeDogId) return;
+    setActiveDogId(dogId);
+    setSelectedIds(new Set());
+    setLightboxIndex(null);
+    setViewLoading(true);
+    try {
+      // Refetch counts alongside the rows so optimistic drift is corrected on
+      // every view switch.
+      const [rows, counts, uCount] = await Promise.all([
+        dogId === null ? fetchUnsortedPhotos() : fetchPhotosForDog(dogId),
+        fetchPhotoCounts(),
+        fetchUnsortedCount(),
+      ]);
+      setPhotos(rows);
+      setFiledCounts(counts);
+      setUnsortedCount(uCount);
+    } catch (error) {
+      reportActionError(
+        error instanceof Error ? error.message : "Loading that view failed.",
+      );
+    } finally {
+      setViewLoading(false);
+    }
+  };
 
   const toggleSelect = (photo: Photo, additive: boolean) => {
     setSelectedIds((previous) => {
@@ -95,7 +138,6 @@ export default function TriagePage() {
       ),
     );
     setPhotoUsed(photo.id, nextUsed).catch((error) => {
-      // Roll back the one photo we touched.
       setPhotos((previous) =>
         previous.map((candidate) =>
           candidate.id === photo.id
@@ -115,7 +157,7 @@ export default function TriagePage() {
     if (burstBusy.current) return;
     burstBusy.current = true;
 
-    findBurst(unsorted, photo)
+    findBurst(displayedPhotos, photo)
       .then(({ ids, failures }) => {
         setSelectedIds((previous) => new Set([...previous, ...ids]));
         if (failures > 0) {
@@ -140,33 +182,53 @@ export default function TriagePage() {
     if (!selectedIds.has(photo.id)) setSelectedIds(new Set([photo.id]));
   };
 
-  const handleDropOnDog = (dogId: string) => {
+  // Move n photos' worth of count from one bucket to another (null = unsorted).
+  const applyCountDelta = (
+    from: string | null,
+    to: string | null,
+    n: number,
+  ) => {
+    if (from === null) setUnsortedCount((count) => Math.max(0, count - n));
+    else
+      setFiledCounts((counts) => ({
+        ...counts,
+        [from]: Math.max(0, (counts[from] ?? 0) - n),
+      }));
+    if (to === null) setUnsortedCount((count) => count + n);
+    else
+      setFiledCounts((counts) => ({
+        ...counts,
+        [to]: (counts[to] ?? 0) + n,
+      }));
+  };
+
+  const handleDrop = (targetDogId: string | null) => {
     setDropTargetId(null);
+    setUnsortedIsDropTarget(false);
     if (selectedIds.size === 0) return;
+    // Dropping onto the bucket you're already viewing changes nothing.
+    if (targetDogId === activeDogId) {
+      setSelectedIds(new Set());
+      return;
+    }
 
-    const filedIds = [...selectedIds];
-    const filedPhotos = photos.filter((photo) => filedIds.includes(photo.id));
+    const movedIds = [...selectedIds];
+    const movedPhotos = photos.filter((photo) => movedIds.includes(photo.id));
+    // Every displayed photo belongs to the active view, so that's the source.
+    const source = activeDogId;
 
-    // Optimistic: remove from the grid and bump the bucket count immediately.
-    setPhotos((previous) => previous.filter((photo) => !filedIds.includes(photo.id)));
-    setFiledCounts((previous) => ({
-      ...previous,
-      [dogId]: (previous[dogId] ?? 0) + filedIds.length,
-    }));
+    setPhotos((previous) => previous.filter((photo) => !movedIds.includes(photo.id)));
+    applyCountDelta(source, targetDogId, movedIds.length);
     setSelectedIds(new Set());
 
-    assignPhotosToDog(filedIds, dogId).catch((error) => {
-      // Roll back: photos return to the grid, count comes back down.
+    assignPhotosToDog(movedIds, targetDogId).catch((error) => {
       setPhotos((previous) =>
-        [...previous, ...filedPhotos].sort((a, b) =>
+        [...previous, ...movedPhotos].sort((a, b) =>
           a.captured_at.localeCompare(b.captured_at),
         ),
       );
-      setFiledCounts((previous) => ({
-        ...previous,
-        [dogId]: Math.max(0, (previous[dogId] ?? 0) - filedIds.length),
-      }));
-      reportActionError(error instanceof Error ? error.message : "Filing failed.");
+      applyCountDelta(targetDogId, source, movedIds.length);
+      reportActionError(error instanceof Error ? error.message : "Move failed.");
     });
   };
 
@@ -178,8 +240,23 @@ export default function TriagePage() {
       );
   };
 
+  const handleRenameDog = (dog: Dog, name: string) => {
+    setDogs((previous) =>
+      previous.map((candidate) =>
+        candidate.id === dog.id ? { ...candidate, name } : candidate,
+      ),
+    );
+    renameDog(dog.id, name).catch((error) => {
+      setDogs((previous) =>
+        previous.map((candidate) =>
+          candidate.id === dog.id ? { ...candidate, name: dog.name } : candidate,
+        ),
+      );
+      reportActionError(error instanceof Error ? error.message : "Rename failed.");
+    });
+  };
+
   const handleSetDogStatus = (dog: Dog, status: Dog["status"]) => {
-    // Optimistic flip with rollback to the dog's previous status.
     setDogs((previous) =>
       previous.map((candidate) =>
         candidate.id === dog.id ? { ...candidate, status } : candidate,
@@ -198,16 +275,21 @@ export default function TriagePage() {
   const handleFilesChosen = async (fileList: FileList | null) => {
     const files = fileList ? [...fileList] : [];
     if (files.length === 0) return;
+    // Uploaded photos always land unsorted, whatever view we're in.
+    const viewingUnsorted = activeDogId === null;
 
     setUploading({ done: 0, total: files.length });
     const outcomes = await uploadPhotos(files, (outcome, completed) => {
       setUploading({ done: completed, total: files.length });
       if (outcome.ok) {
-        setPhotos((previous) =>
-          [...previous, outcome.photo].sort((a, b) =>
-            a.captured_at.localeCompare(b.captured_at),
-          ),
-        );
+        setUnsortedCount((count) => count + 1);
+        if (viewingUnsorted) {
+          setPhotos((previous) =>
+            [...previous, outcome.photo].sort((a, b) =>
+              a.captured_at.localeCompare(b.captured_at),
+            ),
+          );
+        }
       }
     });
     setUploading(null);
@@ -218,6 +300,15 @@ export default function TriagePage() {
         `${failed.length} of ${files.length} uploads failed: ${failed[0].ok ? "" : failed[0].error}`,
       );
     }
+  };
+
+  // Returns the promise so the button can show progress: originals can be
+  // 25MB+, and fetching one takes several seconds.
+  const handleDownload = (photo: Photo) => downloadPhoto(photo.r2_url);
+
+  const openFullscreen = (photo: Photo) => {
+    const index = displayedPhotos.findIndex((p) => p.id === photo.id);
+    if (index >= 0) setLightboxIndex(index);
   };
 
   if (loadState === "loading") {
@@ -254,24 +345,35 @@ export default function TriagePage() {
     );
   }
 
+  const headerTitle = activeDog ? activeDog.name : "Unsorted";
+  const emptyLabel = activeDog
+    ? `No photos filed under ${activeDog.name} yet.`
+    : "Nothing left to sort.";
+
   return (
     <main className="flex h-dvh w-full overflow-hidden">
       <Sidebar
         dogs={dogs}
         photoCounts={filedCounts}
+        unsortedCount={unsortedCount}
+        activeDogId={activeDogId}
         dropTargetId={dropTargetId}
+        unsortedIsDropTarget={unsortedIsDropTarget}
+        onSelectView={(dogId) => void selectView(dogId)}
         onCreateDog={handleCreateDog}
+        onRenameDog={handleRenameDog}
         onSetDogStatus={handleSetDogStatus}
-        onDropOnDog={handleDropOnDog}
+        onDropOnDog={handleDrop}
         onDragOverDog={setDropTargetId}
+        onDragOverUnsorted={setUnsortedIsDropTarget}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">
-            Unsorted
-            <span className="ml-2 font-normal tabular-nums text-muted">
-              {unsorted.length}
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            {headerTitle}
+            <span className="font-normal tabular-nums text-muted">
+              {displayedPhotos.length}
             </span>
           </h2>
 
@@ -283,7 +385,7 @@ export default function TriagePage() {
             )}
             {selectedIds.size > 0 && (
               <p className="text-xs text-muted">
-                {selectedIds.size} selected — drag onto a dog to file
+                {selectedIds.size} selected — drag onto a bucket
               </p>
             )}
             <input
@@ -318,17 +420,39 @@ export default function TriagePage() {
           </div>
         </header>
 
-        <PhotoGrid
-          photos={unsorted}
-          selectedIds={selectedIds}
-          onToggleSelect={toggleSelect}
-          onToggleUsed={toggleUsed}
-          onBurstSelect={burstSelect}
-          onDragStart={handleDragStart}
-          onDragEnd={() => setDropTargetId(null)}
-          onClearSelection={() => setSelectedIds(new Set())}
-        />
+        {viewLoading ? (
+          <div className="grid flex-1 place-items-center">
+            <Loader2 className="size-5 animate-spin text-muted" aria-hidden />
+          </div>
+        ) : (
+          <PhotoGrid
+            photos={displayedPhotos}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onToggleUsed={toggleUsed}
+            onBurstSelect={burstSelect}
+            onOpenFullscreen={openFullscreen}
+            onDownload={handleDownload}
+            onDragStart={handleDragStart}
+            onDragEnd={() => {
+              setDropTargetId(null);
+              setUnsortedIsDropTarget(false);
+            }}
+            onClearSelection={() => setSelectedIds(new Set())}
+            emptyLabel={emptyLabel}
+          />
+        )}
       </div>
+
+      {lightboxIndex !== null && (
+        <Lightbox
+          photos={displayedPhotos}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onDownload={handleDownload}
+        />
+      )}
     </main>
   );
 }

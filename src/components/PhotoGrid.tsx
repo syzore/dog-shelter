@@ -9,9 +9,12 @@ type PhotoGridProps = {
   onToggleSelect: (photo: Photo, additive: boolean) => void;
   onToggleUsed: (photo: Photo) => void;
   onBurstSelect: (photo: Photo) => void;
+  onOpenFullscreen: (photo: Photo) => void;
+  onDownload: (photo: Photo) => void;
   onDragStart: (photo: Photo, event: React.DragEvent) => void;
   onDragEnd: () => void;
   onClearSelection: () => void;
+  emptyLabel: string;
 };
 
 export default function PhotoGrid({
@@ -20,9 +23,12 @@ export default function PhotoGrid({
   onToggleSelect,
   onToggleUsed,
   onBurstSelect,
+  onOpenFullscreen,
+  onDownload,
   onDragStart,
   onDragEnd,
   onClearSelection,
+  emptyLabel,
 }: PhotoGridProps) {
   return (
     <section
@@ -34,7 +40,7 @@ export default function PhotoGrid({
     >
       {photos.length === 0 ? (
         <p className="grid h-full place-items-center text-sm text-muted">
-          Nothing left to sort.
+          {emptyLabel}
         </p>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
@@ -46,6 +52,8 @@ export default function PhotoGrid({
               onToggleSelect={onToggleSelect}
               onToggleUsed={onToggleUsed}
               onBurstSelect={onBurstSelect}
+              onOpenFullscreen={onOpenFullscreen}
+              onDownload={onDownload}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}
             />

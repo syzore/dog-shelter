@@ -25,6 +25,26 @@ export async function fetchUnsortedPhotos(): Promise<Photo[]> {
   return data as Photo[];
 }
 
+export async function fetchPhotosForDog(dogId: string): Promise<Photo[]> {
+  const { data, error } = await getSupabase()
+    .from("photos")
+    .select("*")
+    .eq("dog_id", dogId)
+    .order("captured_at", { ascending: true });
+  if (error) throw new Error(`Loading photos failed: ${error.message}`);
+  return data as Photo[];
+}
+
+/** Exact count of unsorted photos, without pulling the rows. */
+export async function fetchUnsortedCount(): Promise<number> {
+  const { count, error } = await getSupabase()
+    .from("photos")
+    .select("*", { count: "exact", head: true })
+    .is("dog_id", null);
+  if (error) throw new Error(`Counting photos failed: ${error.message}`);
+  return count ?? 0;
+}
+
 /** Sidebar counts: photos already filed, grouped by dog. */
 export async function fetchPhotoCounts(): Promise<Record<string, number>> {
   const { data, error } = await getSupabase()
@@ -39,15 +59,19 @@ export async function fetchPhotoCounts(): Promise<Record<string, number>> {
   return counts;
 }
 
+/** Assign to a dog, or pass null to return photos to the unsorted pile. */
 export async function assignPhotosToDog(
   photoIds: string[],
-  dogId: string,
+  dogId: string | null,
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("photos")
     .update({ dog_id: dogId })
     .in("id", photoIds);
-  if (error) throw new Error(`Filing photos failed: ${error.message}`);
+  if (error) {
+    const verb = dogId ? "Filing" : "Unfiling";
+    throw new Error(`${verb} photos failed: ${error.message}`);
+  }
 }
 
 export async function setPhotoUsed(
@@ -70,6 +94,14 @@ export async function setDogStatus(
     .update({ status })
     .eq("id", dogId);
   if (error) throw new Error(`Updating dog failed: ${error.message}`);
+}
+
+export async function renameDog(dogId: string, name: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from("dogs")
+    .update({ name })
+    .eq("id", dogId);
+  if (error) throw new Error(`Renaming dog failed: ${error.message}`);
 }
 
 export async function createDog(name: string): Promise<Dog> {

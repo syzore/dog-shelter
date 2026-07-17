@@ -22,12 +22,15 @@ reads for burst detection are both cross-origin requests, and **both fail
 without a CORS policy on the bucket**. This cannot be set via an
 object-scoped API token; do it once in the dashboard:
 
-Cloudflare → R2 → *your bucket* → Settings → CORS policy:
+Cloudflare → R2 → _your bucket_ → Settings → CORS policy:
 
 ```json
 [
   {
-    "AllowedOrigins": ["http://localhost:3000", "https://your-app.vercel.app"],
+    "AllowedOrigins": [
+      "http://localhost:3000",
+      "https://dog-shelter-omega.vercel.app"
+    ],
     "AllowedMethods": ["GET", "PUT"],
     "AllowedHeaders": ["content-type"],
     "MaxAgeSeconds": 3600
