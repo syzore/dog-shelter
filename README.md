@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dog Shelter Photo Triage
 
-## Getting Started
+A drag-and-drop dashboard for triaging burst photography of shelter dogs into
+per-dog buckets.
 
-First, run the development server:
+Next.js (App Router) + Tailwind on Vercel, Supabase for Postgres, Cloudflare R2
+for images.
+
+## Status
+
+- [x] **Step 1** — Scaffold, env template, Supabase + R2 clients
+- [x] **Step 2** — Presigned R2 upload API and client upload utility
+- [x] **Step 3** — 20/80 UI shell (currently on mock data)
+- [ ] **Step 4** — Real Supabase data + optimistic drag-and-drop
+- [ ] **Step 5** — Canvas/MSE burst selection
+- [ ] **Step 6** — Bucket management
+
+## Setup
 
 ```bash
+npm install
+cp .env.example .env.local   # then fill it in
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Every value in `.env.example` is documented in place. `.env.local` is gitignored
+and must stay that way.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```sql
+create table dogs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  status text not null default 'active' check (status in ('active', 'adopted')),
+  created_at timestamptz not null default now()
+);
 
-## Learn More
+create table photos (
+  id uuid primary key default gen_random_uuid(),
+  r2_url text not null,
+  captured_at timestamptz not null,
+  dog_id uuid references dogs (id) on delete set null,
+  is_used boolean not null default false
+);
 
-To learn more about Next.js, take a look at the following resources:
+-- The unsorted grid is the app's hot path: dog_id is null, ordered by capture time.
+create index photos_unsorted_idx on photos (captured_at) where dog_id is null;
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Upload flow
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Client asks `/api/upload/presigned-url` for a signed PUT. The **server** picks
+   the R2 key (`photos/<uuid>.<ext>`) so a caller can't overwrite an existing
+   object, and signs `ContentType` and `ContentLength` so a leaked URL can only
+   upload an image of exactly the declared size (25MB cap).
+2. Client PUTs the bytes straight to R2.
+3. Client calls `/api/photos`, which `HeadObject`s the key before inserting, so
+   an abandoned upload can't leave a row pointing at a 404.
 
-## Deploy on Vercel
+## Known caveats
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**No authentication.** Every route is public. Anyone who finds the deployed URL
+can write objects into the R2 bucket and read all dogs and photos. This was a
+deliberate, informed choice for an internal tool; the unlisted URL is currently
+the only thing protecting it. Revisit before sharing the URL widely.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**`captured_at` comes from `file.lastModified`.** Burst grouping windows on this
+field, so it has to be the real capture time. Direct card/cable imports preserve
+it; AirDrop, some cloud syncs, and re-encoding tools do not, and will stamp every
+file with "now" — which collapses all photos into one window and quietly degrades
+burst detection into nonsense. Reading EXIF `DateTimeOriginal` is the fix if that
+becomes a problem.
+
+**Drag-and-drop uses native HTML5 events**, not `@hello-pangea/dnd`. It stays
+fast at any grid size and adds no dependency, at the cost of rougher drag feel
+and no built-in keyboard dragging.

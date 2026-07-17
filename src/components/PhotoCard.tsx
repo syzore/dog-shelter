@@ -1,0 +1,143 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+import { Check, Sparkles } from "lucide-react";
+
+import type { Photo } from "@/lib/types";
+
+type PhotoCardProps = {
+  photo: Photo;
+  isSelected: boolean;
+  onToggleSelect: (photo: Photo, additive: boolean) => void;
+  onToggleUsed: (photo: Photo) => void;
+  onBurstSelect: (photo: Photo) => void;
+  onDragStart: (photo: Photo, event: React.DragEvent) => void;
+  onDragEnd: () => void;
+};
+
+const LONG_PRESS_MS = 400;
+
+export default function PhotoCard({
+  photo,
+  isSelected,
+  onToggleSelect,
+  onToggleUsed,
+  onBurstSelect,
+  onDragStart,
+  onDragEnd,
+}: PhotoCardProps) {
+  // Refs, not state: these track an in-flight gesture and must survive renders
+  // without causing one.
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (pressTimer.current) clearTimeout(pressTimer.current);
+    };
+  }, []);
+
+  const startPress = () => {
+    longPressFired.current = false;
+    pressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      onBurstSelect(photo);
+    }, LONG_PRESS_MS);
+  };
+
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+
+  const handleClick = (event: React.MouseEvent) => {
+    // A long-press already resolved this interaction as a burst select.
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    if (event.shiftKey) {
+      onBurstSelect(photo);
+      return;
+    }
+    onToggleSelect(photo, event.metaKey || event.ctrlKey);
+  };
+
+  return (
+    <figure
+      draggable
+      onDragStart={(event) => {
+        // Firefox refuses to start a drag unless some data is set, and the
+        // effect must be declared for the drop target's cursor to be right.
+        event.dataTransfer.setData("text/plain", photo.id);
+        event.dataTransfer.effectAllowed = "move";
+        onDragStart(photo, event);
+      }}
+      onDragEnd={onDragEnd}
+      onClick={handleClick}
+      onMouseDown={startPress}
+      onMouseUp={cancelPress}
+      onMouseLeave={cancelPress}
+      className={`group relative cursor-pointer overflow-hidden rounded-md border bg-surface transition-all select-none ${
+        isSelected
+          ? "border-accent ring-2 ring-accent"
+          : "border-border hover:border-muted"
+      }`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- R2 serves these
+          directly from a public custom domain; next/image would proxy them
+          through Vercel's optimizer for no benefit and real cost. */}
+      <img
+        src={photo.r2_url}
+        alt=""
+        draggable={false}
+        loading="lazy"
+        className={`block w-full transition-[filter,opacity] ${
+          photo.is_used ? "opacity-40 grayscale" : ""
+        }`}
+      />
+
+      {photo.is_used && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/65 px-1.5 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide text-white/85">
+          Used
+        </span>
+      )}
+
+      <button
+        type="button"
+        aria-pressed={isSelected}
+        aria-label={isSelected ? "Deselect photo" : "Select photo"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleSelect(photo, true);
+        }}
+        className={`absolute left-1.5 top-1.5 grid size-5 place-items-center rounded border transition-opacity ${
+          isSelected
+            ? "border-accent bg-accent text-white"
+            : "border-white/60 bg-black/40 text-transparent opacity-0 group-hover:opacity-100"
+        }`}
+      >
+        <Check className="size-3.5" aria-hidden />
+      </button>
+
+      <button
+        type="button"
+        aria-pressed={photo.is_used}
+        aria-label={photo.is_used ? "Mark as unused" : "Mark as used"}
+        title={photo.is_used ? "Mark as unused" : "Mark as used"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleUsed(photo);
+        }}
+        className={`absolute right-1.5 top-1.5 grid size-5 place-items-center rounded border border-white/25 transition-opacity ${
+          photo.is_used
+            ? "bg-amber-400/90 text-black"
+            : "bg-black/40 text-white/80 opacity-0 group-hover:opacity-100"
+        }`}
+      >
+        <Sparkles className="size-3" aria-hidden />
+      </button>
+    </figure>
+  );
+}
