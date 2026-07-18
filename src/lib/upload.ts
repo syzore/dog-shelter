@@ -1,3 +1,5 @@
+import { objectKeyFor } from "@/lib/imageTypes";
+import { getSupabase } from "@/lib/supabase/client";
 import type { Photo } from "@/lib/types";
 
 const UPLOAD_CONCURRENCY = 4;
@@ -9,6 +11,20 @@ async function readError(response: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+/** Lowercase hex SHA-256 of the file's bytes. */
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function publicBase(): string {
+  const base = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
+  if (!base) throw new Error("NEXT_PUBLIC_R2_PUBLIC_URL is not set.");
+  return base.replace(/\/+$/, "");
 }
 
 /**
@@ -39,16 +55,23 @@ function putToR2(
     xhr.addEventListener("error", () =>
       reject(new Error("Network error during upload.")),
     );
-    xhr.addEventListener("abort", () =>
-      reject(new Error("Upload aborted.")),
-    );
+    xhr.addEventListener("abort", () => reject(new Error("Upload aborted.")));
 
     xhr.send(file);
   });
 }
 
+export type UploadResult =
+  | { status: "uploaded"; photo: Photo }
+  | { status: "duplicate" };
+
 /**
- * Uploads one file and returns the created photo row.
+ * Uploads one file (whose SHA-256 the caller has already computed) and returns
+ * the created photo row — or reports that the exact image already exists.
+ *
+ * The object key is the SHA-256 of the bytes, so an identical image maps to a
+ * URL that is already in the database. We check for that first and skip the
+ * upload entirely (these files are 25MB, so not re-sending a duplicate matters).
  *
  * `captured_at` comes from the file's lastModified stamp, which cameras and
  * phones preserve on export. It is what the burst grouping in the grid sorts
@@ -56,24 +79,39 @@ function putToR2(
  */
 export async function uploadPhoto(
   file: File,
+  hash: string,
   onProgress?: (fraction: number) => void,
-): Promise<Photo> {
+): Promise<UploadResult> {
+  const key = objectKeyFor(hash, file.type);
+  if (!key) throw new Error(`Unsupported image type: ${file.type || "unknown"}.`);
+  const r2Url = `${publicBase()}/${key}`;
+
+  const existing = await getSupabase()
+    .from("photos")
+    .select("id")
+    .eq("r2_url", r2Url)
+    .limit(1)
+    .maybeSingle();
+  if (existing.data) {
+    onProgress?.(1);
+    return { status: "duplicate" };
+  }
+
   const signResponse = await fetch("/api/upload/presigned-url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contentType: file.type, contentLength: file.size }),
+    body: JSON.stringify({
+      contentType: file.type,
+      contentLength: file.size,
+      sha256: hash,
+    }),
   });
 
   if (!signResponse.ok) {
-    throw new Error(
-      await readError(signResponse, "Could not get an upload URL."),
-    );
+    throw new Error(await readError(signResponse, "Could not get an upload URL."));
   }
 
-  const { uploadUrl, key } = (await signResponse.json()) as {
-    uploadUrl: string;
-    key: string;
-  };
+  const { uploadUrl } = (await signResponse.json()) as { uploadUrl: string };
 
   await putToR2(uploadUrl, file, onProgress);
 
@@ -90,22 +128,27 @@ export async function uploadPhoto(
     );
   }
 
-  return (await recordResponse.json()) as Photo;
+  const recorded = (await recordResponse.json()) as Photo | { duplicate: true };
+  if ("duplicate" in recorded) return { status: "duplicate" };
+  return { status: "uploaded", photo: recorded };
 }
 
 export type UploadOutcome =
-  | { file: File; ok: true; photo: Photo }
-  | { file: File; ok: false; error: string };
+  | { file: File; status: "uploaded"; photo: Photo }
+  | { file: File; status: "duplicate" }
+  | { file: File; status: "failed"; error: string };
 
 /**
  * Uploads many files with bounded concurrency. One bad file does not sink the
- * batch — each outcome is reported independently.
+ * batch — each outcome is reported independently. Files that are identical to
+ * one another within the same batch are also collapsed to a single upload.
  */
 export async function uploadPhotos(
   files: File[],
   onFileDone?: (outcome: UploadOutcome, completed: number) => void,
 ): Promise<UploadOutcome[]> {
   const outcomes: UploadOutcome[] = new Array(files.length);
+  const seenHashes = new Set<string>();
   let next = 0;
   let completed = 0;
 
@@ -114,11 +157,22 @@ export async function uploadPhotos(
       const index = next++;
       const file = files[index];
       try {
-        outcomes[index] = { file, ok: true, photo: await uploadPhoto(file) };
+        // Collapse exact duplicates chosen in the same batch before uploading.
+        const hash = await sha256Hex(file);
+        if (seenHashes.has(hash)) {
+          outcomes[index] = { file, status: "duplicate" };
+        } else {
+          seenHashes.add(hash);
+          const result = await uploadPhoto(file, hash);
+          outcomes[index] =
+            result.status === "uploaded"
+              ? { file, status: "uploaded", photo: result.photo }
+              : { file, status: "duplicate" };
+        }
       } catch (error) {
         outcomes[index] = {
           file,
-          ok: false,
+          status: "failed",
           error: error instanceof Error ? error.message : "Upload failed.",
         };
       }

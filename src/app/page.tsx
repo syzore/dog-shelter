@@ -198,10 +198,26 @@ export default function TriagePage() {
       });
   };
 
-  const handleDragStart = (photo: Photo) => {
+  const handleDragStart = (photo: Photo, event: React.DragEvent) => {
     // Dragging an unselected photo drags just that photo; dragging a selected
     // one drags the whole selection.
+    const draggingCount = selectedIds.has(photo.id) ? selectedIds.size : 1;
     if (!selectedIds.has(photo.id)) setSelectedIds(new Set([photo.id]));
+
+    if (draggingCount > 1) {
+      // Replace the default single-image ghost with a small count badge so it's
+      // obvious the whole stack is moving.
+      const badge = document.createElement("div");
+      badge.textContent = `${draggingCount} photos`;
+      badge.style.cssText =
+        "position:absolute;top:-1000px;left:-1000px;padding:6px 12px;" +
+        "border-radius:9999px;background:#6366f1;color:#fff;font:600 13px sans-serif;" +
+        "box-shadow:0 4px 12px rgba(0,0,0,.4);white-space:nowrap;";
+      document.body.appendChild(badge);
+      event.dataTransfer.setDragImage(badge, -12, -12);
+      // The browser snapshots the element synchronously; drop it next tick.
+      window.setTimeout(() => badge.remove(), 0);
+    }
   };
 
   // Move n photos' worth of count from one bucket to another (null = unsorted).
@@ -303,7 +319,7 @@ export default function TriagePage() {
     setUploading({ done: 0, total: files.length });
     const outcomes = await uploadPhotos(files, (outcome, completed) => {
       setUploading({ done: completed, total: files.length });
-      if (outcome.ok) {
+      if (outcome.status === "uploaded") {
         setUnsortedCount((count) => count + 1);
         if (viewingUnsorted) {
           setPhotos((previous) =>
@@ -316,12 +332,15 @@ export default function TriagePage() {
     });
     setUploading(null);
 
-    const failed = outcomes.filter((outcome) => !outcome.ok);
+    const duplicates = outcomes.filter((o) => o.status === "duplicate").length;
+    const failed = outcomes.filter((o) => o.status === "failed");
+    const notes: string[] = [];
+    if (duplicates > 0) notes.push(`${duplicates} already existed (skipped)`);
     if (failed.length > 0) {
-      reportActionError(
-        `${failed.length} of ${files.length} uploads failed: ${failed[0].ok ? "" : failed[0].error}`,
-      );
+      const firstError = failed[0].status === "failed" ? failed[0].error : "";
+      notes.push(`${failed.length} failed: ${firstError}`);
     }
+    if (notes.length > 0) reportActionError(notes.join(" · "));
   };
 
   // Returns the promise so the button can show progress: originals can be
