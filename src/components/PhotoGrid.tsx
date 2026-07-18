@@ -9,6 +9,7 @@ type PhotoGridProps = {
   onToggleSelect: (photo: Photo, additive: boolean) => void;
   onToggleUsed: (photo: Photo) => void;
   onBurstSelect: (photo: Photo) => void;
+  onRangeSelect: (photo: Photo) => void;
   onOpenFullscreen: (photo: Photo) => void;
   onDownload: (photo: Photo) => void;
   onDragStart: (photo: Photo, event: React.DragEvent) => void;
@@ -23,6 +24,7 @@ export default function PhotoGrid({
   onToggleSelect,
   onToggleUsed,
   onBurstSelect,
+  onRangeSelect,
   onOpenFullscreen,
   onDownload,
   onDragStart,
@@ -52,6 +54,7 @@ export default function PhotoGrid({
               onToggleSelect={onToggleSelect}
               onToggleUsed={onToggleUsed}
               onBurstSelect={onBurstSelect}
+              onRangeSelect={onRangeSelect}
               onOpenFullscreen={onOpenFullscreen}
               onDownload={onDownload}
               onDragStart={onDragStart}

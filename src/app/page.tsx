@@ -37,6 +37,8 @@ export default function TriagePage() {
   const [activeDogId, setActiveDogId] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // The pivot a shift+click ranges from — the last individually-touched photo.
+  const [anchorId, setAnchorId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [unsortedIsDropTarget, setUnsortedIsDropTarget] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -92,6 +94,7 @@ export default function TriagePage() {
     if (dogId === activeDogId) return;
     setActiveDogId(dogId);
     setSelectedIds(new Set());
+    setAnchorId(null);
     setLightboxIndex(null);
     setViewLoading(true);
     try {
@@ -115,6 +118,8 @@ export default function TriagePage() {
   };
 
   const toggleSelect = (photo: Photo, additive: boolean) => {
+    // Any direct click on a photo becomes the anchor for the next shift+click.
+    setAnchorId(photo.id);
     setSelectedIds((previous) => {
       if (!additive) {
         return previous.has(photo.id) && previous.size === 1
@@ -126,6 +131,22 @@ export default function TriagePage() {
       else next.add(photo.id);
       return next;
     });
+  };
+
+  // Shift+click: select every photo between the anchor and this one, in the
+  // grid's visual order. With no anchor yet, behaves like a plain select.
+  const rangeSelect = (photo: Photo) => {
+    const ids = displayedPhotos.map((candidate) => candidate.id);
+    const from = anchorId ? ids.indexOf(anchorId) : -1;
+    const to = ids.indexOf(photo.id);
+    if (from === -1 || to === -1) {
+      setAnchorId(photo.id);
+      setSelectedIds(new Set([photo.id]));
+      return;
+    }
+    const [lo, hi] = from <= to ? [from, to] : [to, from];
+    setSelectedIds(new Set(ids.slice(lo, hi + 1)));
+    // Anchor stays put so repeated shift+clicks re-range from the same pivot.
   };
 
   const toggleUsed = (photo: Photo) => {
@@ -153,6 +174,7 @@ export default function TriagePage() {
   const burstSelect = (photo: Photo) => {
     // Select the anchor immediately so the gesture feels instant, then grow
     // the selection as comparisons resolve.
+    setAnchorId(photo.id);
     setSelectedIds((previous) => new Set(previous).add(photo.id));
     if (burstBusy.current) return;
     burstBusy.current = true;
@@ -431,6 +453,7 @@ export default function TriagePage() {
             onToggleSelect={toggleSelect}
             onToggleUsed={toggleUsed}
             onBurstSelect={burstSelect}
+            onRangeSelect={rangeSelect}
             onOpenFullscreen={openFullscreen}
             onDownload={handleDownload}
             onDragStart={handleDragStart}
@@ -438,7 +461,10 @@ export default function TriagePage() {
               setDropTargetId(null);
               setUnsortedIsDropTarget(false);
             }}
-            onClearSelection={() => setSelectedIds(new Set())}
+            onClearSelection={() => {
+              setSelectedIds(new Set());
+              setAnchorId(null);
+            }}
             emptyLabel={emptyLabel}
           />
         )}

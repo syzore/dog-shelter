@@ -40,14 +40,25 @@ Cloudflare → R2 → _your bucket_ → Settings → CORS policy:
 
 Replace the second origin with your real deployment URL(s).
 
+## Selecting photos
+
+- **Click** selects one photo and makes it the anchor.
+- **Cmd/Ctrl+click** toggles a photo in/out of the selection.
+- **Shift+click** selects the contiguous range from the anchor to the clicked
+  photo, in the grid's visual order. The anchor stays put, so you can re-range
+  in either direction.
+- **Long-press** runs burst detection (below).
+- Click empty grid space to clear the selection.
+
+Any selection drags as one stack onto a bucket.
+
 ## Burst selection
 
-Shift+click (or long-press) a photo to select its whole burst. Every photo
-captured within 60 seconds of the anchor is downsampled to 64×64 grayscale on
-a hidden canvas and compared to the anchor by mean squared error; frames
-under the threshold join the selection, and the stack drags as one. Photos
-that fail to load (usually missing CORS) are skipped and reported, never
-fatal.
+Long-press a photo to select its whole burst. Every photo captured within 60
+seconds of the anchor is downsampled to 64×64 grayscale on a hidden canvas and
+compared to the anchor by mean squared error; frames under the threshold join
+the selection. Photos that fail to load (usually missing CORS) are skipped and
+reported, never fatal.
 
 ## Setup
 

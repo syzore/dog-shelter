@@ -12,6 +12,7 @@ type PhotoCardProps = {
   onToggleSelect: (photo: Photo, additive: boolean) => void;
   onToggleUsed: (photo: Photo) => void;
   onBurstSelect: (photo: Photo) => void;
+  onRangeSelect: (photo: Photo) => void;
   onOpenFullscreen: (photo: Photo) => void;
   onDownload: (photo: Photo) => void | Promise<void>;
   onDragStart: (photo: Photo, event: React.DragEvent) => void;
@@ -26,6 +27,7 @@ export default function PhotoCard({
   onToggleSelect,
   onToggleUsed,
   onBurstSelect,
+  onRangeSelect,
   onOpenFullscreen,
   onDownload,
   onDragStart,
@@ -62,8 +64,10 @@ export default function PhotoCard({
       longPressFired.current = false;
       return;
     }
+    // Shift+click selects the range from the anchor to here; burst grouping
+    // now lives on long-press only.
     if (event.shiftKey) {
-      onBurstSelect(photo);
+      onRangeSelect(photo);
       return;
     }
     onToggleSelect(photo, event.metaKey || event.ctrlKey);
