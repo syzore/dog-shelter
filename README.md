@@ -40,6 +40,34 @@ Cloudflare → R2 → _your bucket_ → Settings → CORS policy:
 
 Replace the second origin with your real deployment URL(s).
 
+## Thumbnails
+
+The grid loads a small JPEG preview (~480px, a few KB) instead of the full
+25MB original; fullscreen and download still use the original. Previews are
+content-addressed alongside the original: `photos/<sha256>.<ext>` →
+`photos/thumb/<sha256>.jpg`. New uploads generate their thumbnail in the
+browser at upload time. If a thumbnail is missing (older upload, or a format
+the browser couldn't downscale), the grid's `<img>` falls back to the
+original — so nothing ever breaks, it's just slower for that photo.
+
+To speed up photos uploaded before this existed, backfill their thumbnails:
+
+```bash
+node scripts/backfill-thumbnails.mjs            # all photos
+node scripts/backfill-thumbnails.mjs --limit 20 # a first batch
+```
+
+It reads `.env.local`, skips photos that already have a thumbnail (safe to
+re-run), and uses `sharp` to resize. It downloads each original once, so a
+large library moves real bandwidth.
+
+## Duplicate uploads
+
+Object keys are the SHA-256 of the file's bytes, so an identical image maps to
+the same key and URL. On upload the client hashes each file and skips it if
+that URL is already in the database — no re-upload. (Only catches duplicates of
+images uploaded after this feature; older rows use random keys.)
+
 ## Selecting photos
 
 - **Click** selects one photo and makes it the anchor.

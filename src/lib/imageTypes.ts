@@ -30,3 +30,17 @@ export function objectKeyFor(
   if (!ext) return null;
   return `photos/${sha256Hex}.${ext}`;
 }
+
+/** Where the small preview for a given content hash lives. Always a JPEG. */
+export function thumbKeyFor(sha256Hex: string): string {
+  return `photos/thumb/${sha256Hex}.jpg`;
+}
+
+/**
+ * Derive a photo's thumbnail URL from its original URL, for the grid. If the
+ * thumb doesn't exist (e.g. photos uploaded before thumbnails, or a format we
+ * couldn't downscale), the grid's <img> onError falls back to the original.
+ */
+export function thumbUrlFor(r2Url: string): string {
+  return r2Url.replace(/\/photos\/([^/]+)\.[^./]+$/, "/photos/thumb/$1.jpg");
+}

@@ -27,6 +27,55 @@ function publicBase(): string {
   return base.replace(/\/+$/, "");
 }
 
+const THUMB_MAX_DIM = 480;
+const THUMB_QUALITY = 0.72;
+
+/**
+ * Downscale the image to a small JPEG for the grid. Returns null if the format
+ * can't be decoded in this browser (e.g. some HEIC), in which case the upload
+ * proceeds without a thumbnail and the grid falls back to the original.
+ */
+async function makeThumbnail(file: File): Promise<Blob | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(
+      1,
+      THUMB_MAX_DIM / Math.max(bitmap.width, bitmap.height),
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    return await new Promise((resolve) =>
+      canvas.toBlob((blob) => resolve(blob), "image/jpeg", THUMB_QUALITY),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function putBlob(uploadUrl: string, blob: Blob, contentType: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.addEventListener("load", () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`R2 rejected the upload (HTTP ${xhr.status}).`)),
+    );
+    xhr.addEventListener("error", () =>
+      reject(new Error("Network error during upload.")),
+    );
+    xhr.send(blob);
+  });
+}
+
 /**
  * PUTs the file to R2. Uses XHR rather than fetch because fetch exposes no
  * upload progress, and a burst import is dozens of files at once.
@@ -97,23 +146,36 @@ export async function uploadPhoto(
     return { status: "duplicate" };
   }
 
-  const signResponse = await fetch("/api/upload/presigned-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contentType: file.type,
-      contentLength: file.size,
-      sha256: hash,
+  // Generate the thumbnail while the presign request is in flight.
+  const [signResponse, thumbBlob] = await Promise.all([
+    fetch("/api/upload/presigned-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: file.type,
+        contentLength: file.size,
+        sha256: hash,
+      }),
     }),
-  });
+    makeThumbnail(file),
+  ]);
 
   if (!signResponse.ok) {
     throw new Error(await readError(signResponse, "Could not get an upload URL."));
   }
 
-  const { uploadUrl } = (await signResponse.json()) as { uploadUrl: string };
+  const { uploadUrl, thumbUploadUrl } = (await signResponse.json()) as {
+    uploadUrl: string;
+    thumbUploadUrl: string;
+  };
 
-  await putToR2(uploadUrl, file, onProgress);
+  await Promise.all([
+    putToR2(uploadUrl, file, onProgress),
+    // A failed thumbnail is non-fatal — the grid falls back to the original.
+    thumbBlob
+      ? putBlob(thumbUploadUrl, thumbBlob, "image/jpeg").catch(() => {})
+      : Promise.resolve(),
+  ]);
 
   const capturedAt = new Date(file.lastModified || Date.now()).toISOString();
   const recordResponse = await fetch("/api/photos", {

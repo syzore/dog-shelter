@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Check, Download, Loader2, Maximize2, Sparkles } from "lucide-react";
 
+import { thumbUrlFor } from "@/lib/imageTypes";
 import type { Photo } from "@/lib/types";
 
 type PhotoCardProps = {
@@ -98,10 +99,16 @@ export default function PhotoCard({
           directly from a public custom domain; next/image would proxy them
           through Vercel's optimizer for no benefit and real cost. */}
       <img
-        src={photo.r2_url}
+        src={thumbUrlFor(photo.r2_url)}
         alt=""
         draggable={false}
         loading="lazy"
+        onError={(event) => {
+          // No thumbnail (older upload, or a format we couldn't downscale):
+          // fall back to the full image, once.
+          const img = event.currentTarget;
+          if (img.src !== photo.r2_url) img.src = photo.r2_url;
+        }}
         className={`block w-full transition-[filter,opacity] ${
           photo.is_used ? "opacity-40 grayscale" : ""
         }`}

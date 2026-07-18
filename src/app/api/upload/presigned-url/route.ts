@@ -7,6 +7,7 @@ import {
   EXTENSION_BY_TYPE,
   objectKeyFor,
   SHA256_HEX,
+  thumbKeyFor,
 } from "@/lib/imageTypes";
 import { getR2BucketName, getR2Client, publicUrlForKey } from "@/lib/r2";
 
@@ -65,19 +66,33 @@ export async function POST(request: Request) {
 
   // ContentType and ContentLength are part of the signature, so the presigned
   // URL can only be used to upload an image of exactly the declared size.
-  const uploadUrl = await getSignedUrl(
-    getR2Client(),
-    new PutObjectCommand({
-      Bucket: getR2BucketName(),
-      Key: key,
-      ContentType: contentType,
-      ContentLength: contentLength,
-    }),
-    { expiresIn: URL_TTL_SECONDS },
-  );
+  // The thumbnail URL is signed to the thumb key as a JPEG; its size isn't
+  // known here (the client generates it), so only the type is constrained.
+  const [uploadUrl, thumbUploadUrl] = await Promise.all([
+    getSignedUrl(
+      getR2Client(),
+      new PutObjectCommand({
+        Bucket: getR2BucketName(),
+        Key: key,
+        ContentType: contentType,
+        ContentLength: contentLength,
+      }),
+      { expiresIn: URL_TTL_SECONDS },
+    ),
+    getSignedUrl(
+      getR2Client(),
+      new PutObjectCommand({
+        Bucket: getR2BucketName(),
+        Key: thumbKeyFor(sha256),
+        ContentType: "image/jpeg",
+      }),
+      { expiresIn: URL_TTL_SECONDS },
+    ),
+  ]);
 
   return NextResponse.json({
     uploadUrl,
+    thumbUploadUrl,
     key,
     publicUrl: publicUrlForKey(key),
   });
