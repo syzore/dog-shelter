@@ -59,7 +59,7 @@ async function objectExists(key) {
 
 async function main() {
   const res = await fetch(
-    `${env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/photos?select=id,r2_url`,
+    `${env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/photos?select=id,r2_url&order=captured_at.asc`,
     {
       headers: {
         apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
