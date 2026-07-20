@@ -1,4 +1,6 @@
-import { objectKeyFor } from "@/lib/imageTypes";
+import exifr from "exifr";
+
+import { exifDateToIso, objectKeyFor } from "@/lib/imageTypes";
 import { getSupabase } from "@/lib/supabase/client";
 import type { Photo } from "@/lib/types";
 
@@ -25,6 +27,27 @@ function publicBase(): string {
   const base = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
   if (!base) throw new Error("NEXT_PUBLIC_R2_PUBLIC_URL is not set.");
   return base.replace(/\/+$/, "");
+}
+
+/**
+ * When the photo was actually taken, from EXIF DateTimeOriginal — the signal
+ * burst grouping and grid ordering depend on. `file.lastModified` is the export
+ * time (all photos in a dump land within seconds of each other), so it's only
+ * a last resort. `revive: false` yields a UTC-normalized ISO string, identical
+ * in the browser and in the backfill script.
+ */
+async function captureTime(file: File): Promise<string> {
+  try {
+    const parsed = await exifr.parse(file, {
+      pick: ["DateTimeOriginal"],
+      reviveValues: false,
+    });
+    const iso = exifDateToIso(parsed?.DateTimeOriginal);
+    if (iso) return iso;
+  } catch {
+    // No/unreadable EXIF — fall through to the file timestamp.
+  }
+  return new Date(file.lastModified || Date.now()).toISOString();
 }
 
 const THUMB_MAX_DIM = 480;
@@ -121,10 +144,6 @@ export type UploadResult =
  * The object key is the SHA-256 of the bytes, so an identical image maps to a
  * URL that is already in the database. We check for that first and skip the
  * upload entirely (these files are 25MB, so not re-sending a duplicate matters).
- *
- * `captured_at` comes from the file's lastModified stamp, which cameras and
- * phones preserve on export. It is what the burst grouping in the grid sorts
- * and windows on; see the note in README about EXIF if your source strips it.
  */
 export async function uploadPhoto(
   file: File,
@@ -177,7 +196,7 @@ export async function uploadPhoto(
       : Promise.resolve(),
   ]);
 
-  const capturedAt = new Date(file.lastModified || Date.now()).toISOString();
+  const capturedAt = await captureTime(file);
   const recordResponse = await fetch("/api/photos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

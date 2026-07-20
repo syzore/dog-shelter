@@ -37,6 +37,22 @@ export function thumbKeyFor(sha256Hex: string): string {
 }
 
 /**
+ * Turn a raw EXIF DateTimeOriginal ("YYYY:MM:DD HH:MM:SS", no timezone) into an
+ * ISO string, treating it as UTC. The offset from true UTC doesn't matter — the
+ * app only ever compares capture times to each other — but it must be applied
+ * identically on the client and in the backfill so new and old photos share one
+ * consistent timeline. Returns null if the value isn't a valid EXIF datetime.
+ */
+export function exifDateToIso(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const match = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(raw);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s] = match;
+  const iso = `${y}-${mo}-${d}T${h}:${mi}:${s}Z`;
+  return Number.isNaN(Date.parse(iso)) ? null : iso;
+}
+
+/**
  * Derive a photo's thumbnail URL from its original URL, for the grid. If the
  * thumb doesn't exist (e.g. photos uploaded before thumbnails, or a format we
  * couldn't downscale), the grid's <img> onError falls back to the original.
